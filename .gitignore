@@ -1,3 +1,11 @@
-*/__pycache__/*
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
 .env
+
+# Database / Local Storage
 .chromadb/
+output_pdf/
