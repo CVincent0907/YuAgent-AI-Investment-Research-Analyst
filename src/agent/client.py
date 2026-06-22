@@ -1,6 +1,8 @@
 import os
 from typing import Optional
 from openai import OpenAI
+from langsmith import traceable
+from langsmith.wrappers import wrap_openai
 
 class AgnesClient:
     """Client wrapper for Agnes AI (using OpenAI-compatible interface) for Agentic RAG tasks."""
@@ -23,11 +25,12 @@ class AgnesClient:
             raise ValueError("AGNES_API_KEY is missing. Please set it in your environment or .env file.")
             
         # Standard OpenAI client pointing to the Agnes AI base URL
-        self.client = OpenAI(
+        self.client = wrap_openai(OpenAI(
             api_key=self.api_key,
             base_url=self.base_url
-        )
+        ))
 
+    @traceable(name="Agnes AI Query Rewrite")
     def analyze_and_rewrite_query(self, user_query: str) -> str:
         """Analyzes and expands/rewrites a user query for optimal retrieval from the vector database.
         
