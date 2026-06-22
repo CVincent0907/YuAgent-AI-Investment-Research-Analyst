@@ -1,10 +1,13 @@
 import os
 from dotenv import load_dotenv
+from langsmith import traceable
 from src.ingestion import PDFParser
 from src.chunking import RecursiveTextSplitter
 from src.embeddings.embedder import LocalEmbedder
 from src.vectordb.chroma_client import ChromaVectorStore
 
+
+@traceable(name="Ingest and Store PDF Action")
 def ingest_and_store(pdf_path: str, persist_dir: str = ".chromadb", collection_name: str = "financial_rag"):
     """Parse a PDF, chunk it, embed the chunks, and upsert them into Chroma.
     Returns the ChromaVectorStore instance for later queries.

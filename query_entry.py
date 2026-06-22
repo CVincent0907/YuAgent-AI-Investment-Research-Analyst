@@ -1,11 +1,13 @@
 import os
 import sys
 import json
-from dotenv import load_dotenv
 import re
+from dotenv import load_dotenv
 
-# Load environment variables (API keys, base URL, etc.)
+# 1. Load env before imports to ensure all library initializations see the env vars
 load_dotenv()
+
+from langsmith import traceable # Added for tracing
 
 from src.ingestion import PDFParser
 from src.chunking import RecursiveTextSplitter
@@ -15,49 +17,236 @@ from src.agent.client import AgnesClient
 from src.tools.retrieval_selector import RetrievalGraph
 from src.tools.chat_memory import ChatMemory
 
-# Ingestion logic has been moved to `ingest_embed.py`.
-# This script focuses solely on querying the existing Chroma collection.
+# Import new tools
+from src.tools.financial_tools import get_financial_statements, get_ticker_news
+from src.tools.python_interpreter import execute_python_code
+from src.tools.pdf_exporter import export_findings_to_pdf
 
-def query_flow(user_query: str, store: ChromaVectorStore, embedder: LocalEmbedder):
-    """Perform the Agentic RAG retrieval and reasoning steps for a given query."""
-    # 1. Agentic rewrite (if Agnes credentials are available)
-    optimized_query = user_query
-    if os.getenv("AGNES_API_KEY"):
-        agnes = AgnesClient()
-        optimized_query = agnes.analyze_and_rewrite_query(user_query)
-        print(f"Optimized query: {optimized_query}")
+@traceable(name="Process Chat Turn", run_type="chain")
+def process_chat_turn(user_input, store, embedder, agnes, memory):
+    """
+    Wraps a single interaction in a trace. 
+    Allows LangSmith to group everything into one tree.
+    """
+    if not agnes:
+        return "[AGNES_API_KEY not set] Unable to generate final answer."
+
+    # Define tools for the Agnes AI Model
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "retrieve_local_rag",
+                "description": "Search and retrieve context from local financial documents (e.g. PDFs, statements).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Semantic query for RAG database retrieval."}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_financial_statements",
+                "description": "Get historical financials (Income Statement, Balance Sheet, Cash Flow) for a ticker from Yahoo Finance.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker_symbol": {"type": "string", "description": "The stock ticker symbol (e.g., AAPL, TSLA)."}
+                    },
+                    "required": ["ticker_symbol"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_ticker_news",
+                "description": "Get recent news and articles for a stock ticker to analyze qualitative news sentiment.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker_symbol": {"type": "string", "description": "The stock ticker symbol."}
+                    },
+                    "required": ["ticker_symbol"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "execute_python_code",
+                "description": "Run Python code to calculate financial ratios (Margins, ROE, CAGR, Debt/EBITDA) and build forecasts. Print outputs.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string", "description": "The python code to execute. Standard output is captured and returned."}
+                    },
+                    "required": ["code"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "export_findings_to_pdf",
+                "description": "Generate a professionally styled PDF report with final explanations and tables. Use this when findings (such as forecasts or ratios) are generated and the user wants to export a PDF report.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {"type": "string", "description": "The stock ticker symbol (e.g. AAPL)."},
+                        "title": {"type": "string", "description": "Professional report title (e.g. AAPL Revenue Forecast & Valuation Analysis)."},
+                        "explanation": {"type": "string", "description": "Executive summary and analysis paragraphs explaining the findings in details."},
+                        "tables_data": {
+                            "type": "object",
+                            "description": "A dictionary where keys are table names (strings) and values are lists of lists representing rows and cells. Example: {'CAGR & Revenue Forecast': [['Metric', '2024', '2025'], ['Revenue ($B)', '394.33', '412.50'], ['Growth Rate', 'N/A', '4.6%']]}"
+                        },
+                        "output_filename": {"type": "string", "description": "Optional custom filename. Defaults to '<ticker>_financial_analysis_report.pdf'."}
+                    },
+                    "required": ["ticker", "title", "explanation", "tables_data"]
+                }
+            }
+        }
+    ]
+
+    system_msg = (
+        "You are a Senior Financial Equity Analyst. Your goal is to perform a forward-looking financial analysis and valuation.\n\n"
+        "Your Workflow:\n"
+        "1. Data Gathering: Attempt to retrieve historical financials (Income Statement, Balance Sheet, Cash Flow) for the requested ticker. "
+        "Prioritize local RAG documents using `retrieve_local_rag`; if unavailable or incomplete, use the Financial Data API via `get_financial_statements`.\n"
+        "2. Contextual Search: Search specifically for 'Management Guidance,' 'Earnings Call Transcripts,' and 'Industry Tailwinds' using the specialized search tool `search_web`.\n"
+        "3. Quantitative Modeling: Use the Python Interpreter tool `execute_python_code` to calculate key financial ratios (Margins, ROE, Debt/EBITDA) and build a 3-year revenue forecast based on historical CAGR and guidance.\n"
+        "4. Synthesis: Combine the quantitative model with qualitative news sentiment (via `get_ticker_news`) to predict the company's future performance.\n"
+        "5. Audit: Every number must be cited. If the source is a local doc, provide the filename; if it is the API/Web, provide the source. If data is missing, do not hallucinate—state that the data is unavailable for modeling."
+    )
+
+    history = memory.formatted_history()
+    
+    messages = [
+        {"role": "system", "content": system_msg}
+    ]
+    if history:
+        messages.append({"role": "user", "content": f"Conversation history:\n{history}"})
+        messages.append({"role": "user", "content": f"New Query: {user_input}"})
     else:
-        print("AGNES_API_KEY not set – using original query.")
+        messages.append({"role": "user", "content": user_input})
 
-    # 2. Retrieve context via the agentic RetrievalGraph
-    graph = RetrievalGraph(store=store, embedder=embedder)
-    source, matches, retrieved_text = graph.retrieve(optimized_query)
-    print(f"Source selected: {source}. Retrieved {len(matches)} items.")
+    gathered_context = []
 
-    # 4. Final reasoning with Agnes AI (if credentials exist)
-    if os.getenv("AGNES_API_KEY"):
-        agnes = AgnesClient()
-        final_prompt = (
-            f"User query: {optimized_query}\n\n"
-            f"Relevant information retrieved from documents:\n{retrieved_text}\n\n"
-            "Provide a concise, accurate answer using the above context."
-        )
+    # Agent ReAct Loop
+    max_iterations = 8
+    iteration = 0
+    
+    while iteration < max_iterations:
+        iteration += 1
+        print(f"[Agent Loop] Iteration {iteration}...")
+        
         response = agnes.client.chat.completions.create(
             model=agnes.model_name,
-            messages=[{"role": "system", "content": "You are a financial analyst assistant."},
-                      {"role": "user", "content": final_prompt}],
-            temperature=0.0,
-            max_tokens=500,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            temperature=0.0
         )
-        answer = response.choices[0].message.content.strip()
-        print("\n--- Final Answer ---\n")
-        print(answer)
-    else:
-        print("AGNES_API_KEY not set – cannot perform final reasoning step.")
+        
+        message = response.choices[0].message
+        messages.append(message)
+        
+        if not message.tool_calls:
+            print("[Agent Loop] No more tool calls requested. Finalizing response.")
+            break
+            
+        for tool_call in message.tool_calls:
+            tool_name = tool_call.function.name
+            tool_args = json.loads(tool_call.function.arguments)
+            tool_id = tool_call.id
+            
+            print(f"[Agent Call Tool] {tool_name} with args: {tool_args}")
+            
+            result = ""
+            if tool_name == "retrieve_local_rag":
+                query = tool_args.get("query")
+                graph = RetrievalGraph(store=store, embedder=embedder)
+                source, matches, retrieved_text = graph.retrieve(query)
+                result = f"Retrieved from local RAG (source: {source}):\n{retrieved_text}"
+                gathered_context.append(result)
+                
+            elif tool_name == "get_financial_statements":
+                ticker = tool_args.get("ticker_symbol")
+                result = get_financial_statements(ticker)
+                gathered_context.append(f"Yahoo Finance financials for {ticker}:\n{result}")
+                
+            elif tool_name == "get_ticker_news":
+                ticker = tool_args.get("ticker_symbol")
+                result = get_ticker_news(ticker)
+                gathered_context.append(f"Yahoo Finance news for {ticker}:\n{result}")
+                
+            elif tool_name == "execute_python_code":
+                code = tool_args.get("code")
+                result = execute_python_code(code)
+                print(f"[Python Exec Output]\n{result}")
+                
+            elif tool_name == "search_web":
+                query = tool_args.get("query")
+                graph = RetrievalGraph(store=store, embedder=embedder)
+                docs = graph.selector.search_web(query)
+                if docs:
+                    result = "\n\n".join([f"SOURCE: {d.metadata.get('source')}\n{d.page_content}" for d in docs])
+                else:
+                    result = "No web search results."
+                gathered_context.append(f"Web search for '{query}':\n{result}")
+                
+            else:
+                result = f"Unknown tool: {tool_name}"
+                
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_id,
+                "name": tool_name,
+                "content": result
+            })
 
+    candidate_answer = messages[-1].content if messages[-1].role == "assistant" else ""
+    if not candidate_answer:
+        candidate_answer = str(messages[-1])
+
+    # --- BINARY GATEKEEPER ---
+    gatekeeper_system_msg = (
+        "You are a quality control auditor. Your ONLY task is to determine if the AI Answer "
+        "correctly and safely addresses the User Query based on the provided context. "
+        "If the answer is relevant, accurate, and helpful, output 'YES'. "
+        "If the answer is irrelevant, avoids the question, or is based on insufficient info, output 'NO'. "
+        "Output ONLY the word 'YES' or 'NO'."
+    )
+    
+    context_summary = "\n\n".join(gathered_context) if gathered_context else "No external context retrieved."
+    gatekeeper_user_msg = (
+        f"User Query: {user_input}\n"
+        f"Retrieved Context:\n{context_summary}\n\n"
+        f"AI Answer: {candidate_answer}\n\n"
+        "Decision (YES/NO):"
+    )
+
+    gatekeeper_response = agnes.client.chat.completions.create(
+        model=agnes.model_name,
+        messages=[{"role": "system", "content": gatekeeper_system_msg}, {"role": "user", "content": gatekeeper_user_msg}],
+        temperature=0.0,
+    )
+    
+    decision = gatekeeper_response.choices[0].message.content.strip().upper()
+    print(f"[Gatekeeper Decision: {decision}]")
+
+    # Final Output Logic
+    if "YES" in decision:
+        return candidate_answer
+    else:
+        return f"[Audit Note: Candidate answer did not pass validation check. Gatekeeper Decision: {decision}]\n\nHere is the generated analysis for your reference:\n\n{candidate_answer}"
 
 def chat_loop():
-    """Interactive continuous chat session with Answer Relevance Gatekeeper."""
+    """Interactive continuous chat session."""
     store = ChromaVectorStore(persist_dir=".chromadb", collection_name="financial_rag")
     embedder = LocalEmbedder()
     agnes = AgnesClient() if os.getenv("AGNES_API_KEY") else None
@@ -74,77 +263,14 @@ def chat_loop():
         if not user_input:
             continue
 
-        # 1. Optimize query
-        optimized_query = user_input
-        if agnes:
-            optimized_query = agnes.analyze_and_rewrite_query(user_input)
-            print(f"[Optimized] {optimized_query}")
+        # Process the turn through the traceable function
+        answer = process_chat_turn(user_input, store, embedder, agnes, memory)
+        
+        print("\nAssistant:", answer, "\n")
+        
+        # Store in memory
+        memory.add_message("user", user_input)
+        memory.add_message("assistant", answer)
 
-        # 2. Retrieve context
-        graph = RetrievalGraph(store=store, embedder=embedder)
-        source, matches, retrieved_text = graph.retrieve(optimized_query)
-        print(f"Source selected: {source}. Retrieved {len(matches)} items.")
-
-        # 3. Build prompt and Generate Candidate Answer
-        history = memory.formatted_history()
-        system_msg = "You are a financial analyst assistant."
-        source_label = {"vector": "local docs", "vector+web": "docs + web"}.get(source, "context")
-
-        user_msg = (
-            (f"Conversation so far:\n{history}\n\n" if history else "")
-            + f"User query: {optimized_query}\n\n"
-            + f"Context retrieved from {source_label}:\n{retrieved_text}\n\n"
-            + "Provide a concise, accurate answer using the above context."
-        )
-
-        if agnes:
-            # Generate Candidate Answer
-            response = agnes.client.chat.completions.create(
-                model=agnes.model_name,
-                messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-                temperature=0.0,
-                max_tokens=1000,
-            )
-            candidate_answer = response.choices[0].message.content.strip()
-
-            # This gatekeep reduces flexibility of model TODO 
-            # --- UPDATED STEP: BINARY GATEKEEPER ---
-            gatekeeper_system_msg = (
-                "You are a quality control auditor. Your ONLY task is to determine if the AI Answer "
-                "correctly and safely addresses the User Query based on the provided context. "
-                "If the answer is relevant, accurate, and helpful, output 'YES'. "
-                "If the answer is irrelevant, avoids the question, or is based on insufficient info, output 'NO'. "
-                "Output ONLY the word 'YES' or 'NO'."
-            )
-            gatekeeper_user_msg = (
-                f"User Query: {user_input}\n"
-                f"AI Answer: {candidate_answer}\n\n"
-                "Decision (YES/NO):"
-            )
-
-            gatekeeper_response = agnes.client.chat.completions.create(
-                model=agnes.model_name,
-                messages=[{"role": "system", "content": gatekeeper_system_msg}, {"role": "user", "content": gatekeeper_user_msg}],
-                temperature=0.0,
-            )
-            
-            decision = gatekeeper_response.choices[0].message.content.strip().upper()
-            print(f"[Gatekeeper Decision: {decision}]")
-
-            # Final Output Logic
-            if "YES" in decision:
-                final_answer = candidate_answer
-            else:
-                final_answer = "I'm sorry, I cannot provide a sufficiently accurate answer based on the retrieved documents."
-            
-            print("\nAssistant:", final_answer, "\n")
-            
-            # Store conversation in memory
-            memory.add_message("user", user_input)
-            memory.add_message("assistant", final_answer)
-
-        else:
-            print("\nAssistant: [AGNES_API_KEY not set] Unable to generate final answer.\n")
 if __name__ == "__main__":
     chat_loop()
-

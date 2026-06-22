@@ -1,9 +1,11 @@
 import os
 from dotenv import load_dotenv
-from ingest_embed import ingest_and_store
 
 # Load environment variables (if any needed for embedding/model)
 load_dotenv()
+
+from ingest_embed import ingest_and_store
+from langsmith import traceable
 
 # ------------------------------------------------------------------
 # HARDCODE YOUR PDF PATH BELOW
@@ -11,6 +13,7 @@ load_dotenv()
 # Replace the string with the absolute or relative path to your PDF file.
 # ------------------------------------------------------------------
 
+@traceable(name="Ingest and Store PDF")
 def ingest_entry():
     PDF_PATH = os.path.join("data", "FY26_Q1_Consolidated_Financial_Statements.pdf")
 
