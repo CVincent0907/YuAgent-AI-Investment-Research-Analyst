@@ -8,3 +8,6 @@ langchain>=0.1.0
 langchain-openai>=0.0.5
 ddgs
 flashrank 
+rank_bm25 
+yfinance
+tabulate
