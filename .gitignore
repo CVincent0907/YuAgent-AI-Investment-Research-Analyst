@@ -8,4 +8,5 @@ __pycache__/
 
 # Database / Local Storage
 .chromadb/
-output_pdf/
+output_financials_pdf/
+output_news_pdf/
