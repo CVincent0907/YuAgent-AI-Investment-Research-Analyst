@@ -14,13 +14,14 @@ from src.chunking import RecursiveTextSplitter
 from src.embeddings.embedder import LocalEmbedder
 from src.vectordb.chroma_client import ChromaVectorStore
 from src.agent.client import AgnesClient
-from src.tools.retrieval_selector import RetrievalGraph
-from src.tools.chat_memory import ChatMemory
+from src.tools.retrieval_rag_web_tools import RetrievalGraph
+from src.tools.chat_memory_tools import ChatMemory
 
 # Import new tools
 from src.tools.financial_tools import get_financial_statements, get_ticker_news
-from src.tools.python_interpreter import execute_python_code
-from src.tools.pdf_exporter import export_findings_to_pdf
+from src.tools.python_interpreter_tools import execute_python_code
+from src.tools.pdf_exporter.financial_pdf_exporter_tools import export_financial_findings_to_pdf
+from src.tools.pdf_exporter.news_pdf_exporter_tools import export_news_report_to_pdf
 
 @traceable(name="Process Chat Turn", run_type="chain")
 def process_chat_turn(user_input, store, embedder, agnes, memory):
@@ -36,7 +37,7 @@ def process_chat_turn(user_input, store, embedder, agnes, memory):
         {
             "type": "function",
             "function": {
-                "name": "retrieve_local_rag",
+                "name": "retrieve_corrective_rag",
                 "description": "Search and retrieve context from local financial documents (e.g. PDFs, statements).",
                 "parameters": {
                     "type": "object",
@@ -92,8 +93,22 @@ def process_chat_turn(user_input, store, embedder, agnes, memory):
         {
             "type": "function",
             "function": {
-                "name": "export_findings_to_pdf",
-                "description": "Generate a professionally styled PDF report with final explanations and tables. Use this when findings (such as forecasts or ratios) are generated and the user wants to export a PDF report.",
+                "name": "search_web",
+                "description": "Perform a live web search to find current news, management guidance, and industry trends that are not in the local database.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "The search query to look up on the web."}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "export_financials_to_pdf",
+                "description": "Generate a professionally styled PDF report with final explanations and tables. Use this when findings (such as forecasts or ratios) are generated and the user wants to export a PDF report that involves financial tables.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -107,6 +122,34 @@ def process_chat_turn(user_input, store, embedder, agnes, memory):
                         "output_filename": {"type": "string", "description": "Optional custom filename. Defaults to '<ticker>_financial_analysis_report.pdf'."}
                     },
                     "required": ["ticker", "title", "explanation", "tables_data"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "export_news_report_to_pdf",
+                "description": "Generate a PDF report for news articles, qualitative sentiment, or profiles of people. Use this when the user wants to export non-financial news summaries.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "subject": {"type": "string", "description": "The person or company name."},
+                        "title": {"type": "string", "description": "Title of the news brief."},
+                        "analysis_summary": {"type": "string", "description": "A narrative summary of the news findings."},
+                        "news_items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "source": {"type": "string"},
+                                    "date": {"type": "string"},
+                                    "summary": {"type": "string"}
+                                }
+                            }
+                        }
+                    },
+                    "required": ["subject", "title", "analysis_summary", "news_items"]
                 }
             }
         }
@@ -167,7 +210,7 @@ def process_chat_turn(user_input, store, embedder, agnes, memory):
             print(f"[Agent Call Tool] {tool_name} with args: {tool_args}")
             
             result = ""
-            if tool_name == "retrieve_local_rag":
+            if tool_name == "retrieve_corrective_rag":
                 query = tool_args.get("query")
                 graph = RetrievalGraph(store=store, embedder=embedder)
                 source, matches, retrieved_text = graph.retrieve(query)
@@ -198,7 +241,32 @@ def process_chat_turn(user_input, store, embedder, agnes, memory):
                 else:
                     result = "No web search results."
                 gathered_context.append(f"Web search for '{query}':\n{result}")
-                
+            
+            elif tool_name == "export_financials_to_pdf":
+                # Get all arguments from the tool call
+                ticker = tool_args.get("ticker")
+                title = tool_args.get("title")
+                explanation = tool_args.get("explanation")
+                tables_data = tool_args.get("tables_data")
+                output_filename = tool_args.get("output_filename") # This is optional
+
+                # Call the actual PDF export function
+                result = export_financial_findings_to_pdf(
+                    ticker=ticker,
+                    title=title,
+                    explanation=explanation,
+                    tables_data=tables_data,
+                    output_filename=output_filename
+                )
+
+            elif tool_name == "export_news_report_to_pdf":
+                result = export_news_report_to_pdf(
+                    subject=tool_args.get("subject"),
+                    title=tool_args.get("title"),
+                    analysis_summary=tool_args.get("analysis_summary"),
+                    news_items=tool_args.get("news_items")
+                )
+
             else:
                 result = f"Unknown tool: {tool_name}"
                 
