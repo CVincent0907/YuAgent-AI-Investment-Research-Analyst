@@ -3,11 +3,14 @@ import uuid
 import chromadb
 from typing import List, Dict, Any, Tuple, Optional
 from src.ingestion import Document
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class ChromaVectorStore:
     """Manages index lifecycle and document storage/retrieval in Chroma DB."""
     
-    def __init__(self, persist_dir: str = ".chromadb", collection_name: str = "financial_rag"):
+    def __init__(self, persist_dir: str = os.getenv("CHROMA_DIR"), collection_name: str = "financial_rag"):
         """Initializes the Chroma persistent client.
         
         Args:
