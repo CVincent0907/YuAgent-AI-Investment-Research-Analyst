@@ -7,6 +7,7 @@ __pycache__/
 .env
 
 # Database / Local Storage
-.chromadb/
+.ltm_mem0_storage/
+.financial_chroma_db/
 output_financials_pdf/
 output_news_pdf/
