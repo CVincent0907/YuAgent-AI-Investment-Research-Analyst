@@ -196,7 +196,7 @@ class RetrievalGraph:
 
         return graph.compile()
 
-    @traceable(run_type="retriever")
+    @traceable(name="Tool: Corrective RAG")
     def retrieve(self, query: str) -> Tuple[str, List[Any], str]:
         """Runs the full Corrective RAG pipeline."""
         init_state: RetrievalState = {"query": query}
