@@ -35,7 +35,7 @@ def export_financial_findings_to_pdf(
     print(f"\n[PDF Financials TOOL] Starting PDF generation for {ticker}...")
     
     # 1. Directory Handling
-    target_dir = "output_financials_pdf"
+    target_dir = "output_pdf/financials"
     if not os.path.exists(target_dir):
         os.makedirs(target_dir)
 

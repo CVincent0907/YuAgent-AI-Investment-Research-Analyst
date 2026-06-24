@@ -35,7 +35,7 @@ def export_news_report_to_pdf(
     print(f"\n[PDF News TOOL] Starting News Report for {subject}...")
     
     # 1. Directory Handling
-    target_dir = "output_news_pdf"
+    target_dir = "output_pdf/news"
     if not os.path.exists(target_dir):
         os.makedirs(target_dir)
 
