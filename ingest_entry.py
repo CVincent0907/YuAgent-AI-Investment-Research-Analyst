@@ -13,7 +13,7 @@ from langsmith import traceable
 # Replace the string with the absolute or relative path to your PDF file.
 # ------------------------------------------------------------------
 
-@traceable(name="Ingest and Store PDF")
+@traceable(name="Documents Ingestion: Ingest and Store PDF")
 def ingest_entry():
     PDF_PATH = os.path.join("data", "FY26_Q1_Consolidated_Financial_Statements.pdf")
 
