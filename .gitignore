@@ -6,10 +6,14 @@ __pycache__/
 # Environment variables
 .env
 
+
 # Database / Local Storage
 .ltm_mem0_storage/
 .financial_chroma_db/
 output_financials_pdf/
 output_news_pdf/
 output_pdf/
+data/
 
+# Virtual environment 
+ragvenv/
