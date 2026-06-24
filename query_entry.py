@@ -1,403 +1,59 @@
-# import os
-# import sys
-# import json
-# import re
-# from dotenv import load_dotenv
-
-# # 1. Load env before imports to ensure all library initializations see the env vars
-# load_dotenv()
-
-# from langsmith import traceable # Added for tracing
-
-# from src.ingestion import PDFParser
-# from src.chunking import RecursiveTextSplitter
-# from src.embeddings.embedder import LocalEmbedder
-# from src.vectordb.chroma_client import ChromaVectorStore
-# from src.agent.client import AgnesClient
-# from src.tools.retrieval_rag_web_tools import RetrievalGraph
-# from src.tools.chat_memory_tools import ChatMemory
-
-# # Import new tools
-# from src.tools.financial_tools import get_financial_statements, get_ticker_news
-# from src.tools.python_interpreter_tools import execute_python_code
-# from src.tools.pdf_exporter.financial_pdf_exporter_tools import export_financial_findings_to_pdf
-# from src.tools.pdf_exporter.news_pdf_exporter_tools import export_news_report_to_pdf
-
-# @traceable(name="Process Chat Turn", run_type="chain")
-# def process_chat_turn(user_input, store, embedder, agnes, memory):
-#     """
-#     Wraps a single interaction in a trace. 
-#     Allows LangSmith to group everything into one tree.
-#     """
-#     if not agnes:
-#         return "[AGNES_API_KEY not set] Unable to generate final answer."
-
-#     # Define tools for the Agnes AI Model
-#     tools = [
-#         {
-#             "type": "function",
-#             "function": {
-#                 "name": "retrieve_corrective_rag",
-#                 "description": "Search and retrieve context from local financial documents (e.g. PDFs, statements).",
-#                 "parameters": {
-#                     "type": "object",
-#                     "properties": {
-#                         "query": {"type": "string", "description": "Semantic query for RAG database retrieval."}
-#                     },
-#                     "required": ["query"]
-#                 }
-#             }
-#         },
-#         {
-#             "type": "function",
-#             "function": {
-#                 "name": "get_financial_statements",
-#                 "description": "Get historical financials (Income Statement, Balance Sheet, Cash Flow) for a ticker from Yahoo Finance.",
-#                 "parameters": {
-#                     "type": "object",
-#                     "properties": {
-#                         "ticker_symbol": {"type": "string", "description": "The stock ticker symbol (e.g., AAPL, TSLA)."}
-#                     },
-#                     "required": ["ticker_symbol"]
-#                 }
-#             }
-#         },
-#         {
-#             "type": "function",
-#             "function": {
-#                 "name": "get_ticker_news",
-#                 "description": "Get recent news and articles for a stock ticker to analyze qualitative news sentiment.",
-#                 "parameters": {
-#                     "type": "object",
-#                     "properties": {
-#                         "ticker_symbol": {"type": "string", "description": "The stock ticker symbol."}
-#                     },
-#                     "required": ["ticker_symbol"]
-#                 }
-#             }
-#         },
-#         {
-#             "type": "function",
-#             "function": {
-#                 "name": "execute_python_code",
-#                 "description": "Run Python code to calculate financial ratios (Margins, ROE, CAGR, Debt/EBITDA) and build forecasts. Print outputs.",
-#                 "parameters": {
-#                     "type": "object",
-#                     "properties": {
-#                         "code": {"type": "string", "description": "The python code to execute. Standard output is captured and returned."}
-#                     },
-#                     "required": ["code"]
-#                 }
-#             }
-#         },
-#         {
-#             "type": "function",
-#             "function": {
-#                 "name": "search_web",
-#                 "description": "Perform a live web search to find current news, management guidance, and industry trends that are not in the local database.",
-#                 "parameters": {
-#                     "type": "object",
-#                     "properties": {
-#                         "query": {"type": "string", "description": "The search query to look up on the web."}
-#                     },
-#                     "required": ["query"]
-#                 }
-#             }
-#         },
-#         {
-#             "type": "function",
-#             "function": {
-#                 "name": "export_financials_to_pdf",
-#                 "description": "Generate a professionally styled PDF report with final explanations and tables. Use this when findings (such as forecasts or ratios) are generated and the user wants to export a PDF report that involves financial tables.",
-#                 "parameters": {
-#                     "type": "object",
-#                     "properties": {
-#                         "ticker": {"type": "string", "description": "The stock ticker symbol (e.g. AAPL)."},
-#                         "title": {"type": "string", "description": "Professional report title (e.g. AAPL Revenue Forecast & Valuation Analysis)."},
-#                         "explanation": {"type": "string", "description": "Executive summary and analysis paragraphs explaining the findings in details."},
-#                         "tables_data": {
-#                             "type": "object",
-#                             "description": "A dictionary where keys are table names (strings) and values are lists of lists representing rows and cells. Example: {'CAGR & Revenue Forecast': [['Metric', '2024', '2025'], ['Revenue ($B)', '394.33', '412.50'], ['Growth Rate', 'N/A', '4.6%']]}"
-#                         },
-#                         "output_filename": {"type": "string", "description": "Optional custom filename. Defaults to '<ticker>_financial_analysis_report.pdf'."}
-#                     },
-#                     "required": ["ticker", "title", "explanation", "tables_data"]
-#                 }
-#             }
-#         },
-#         {
-#             "type": "function",
-#             "function": {
-#                 "name": "export_news_report_to_pdf",
-#                 "description": "Generate a PDF report for news articles, qualitative sentiment, or profiles of people. Use this when the user wants to export non-financial news summaries.",
-#                 "parameters": {
-#                     "type": "object",
-#                     "properties": {
-#                         "subject": {"type": "string", "description": "The person or company name."},
-#                         "title": {"type": "string", "description": "Title of the news brief."},
-#                         "analysis_summary": {"type": "string", "description": "A narrative summary of the news findings."},
-#                         "news_items": {
-#                             "type": "array",
-#                             "items": {
-#                                 "type": "object",
-#                                 "properties": {
-#                                     "title": {"type": "string"},
-#                                     "source": {"type": "string"},
-#                                     "date": {"type": "string"},
-#                                     "summary": {"type": "string"}
-#                                 }
-#                             }
-#                         }
-#                     },
-#                     "required": ["subject", "title", "analysis_summary", "news_items"]
-#                 }
-#             }
-#         }
-#     ]
-
-#     system_msg = (
-#         "You are a Senior Financial Equity Analyst. Your goal is to perform a forward-looking financial analysis and valuation.\n\n"
-#         "Your Workflow:\n"
-#         "1. Data Gathering: Attempt to retrieve historical financials (Income Statement, Balance Sheet, Cash Flow) for the requested ticker. "
-#         "Prioritize local RAG documents using `retrieve_local_rag`; if unavailable or incomplete, use the Financial Data API via `get_financial_statements`.\n"
-#         "2. Contextual Search: Search specifically for 'Management Guidance,' 'Earnings Call Transcripts,' and 'Industry Tailwinds' using the specialized search tool `search_web`.\n"
-#         "3. Quantitative Modeling: Use the Python Interpreter tool `execute_python_code` to calculate key financial ratios (Margins, ROE, Debt/EBITDA) and build a 3-year revenue forecast based on historical CAGR and guidance.\n"
-#         "4. Synthesis: Combine the quantitative model with qualitative news sentiment (via `get_ticker_news`) to predict the company's future performance.\n"
-#         "5. Audit: Every number must be cited. If the source is a local doc, provide the filename; if it is the API/Web, provide the source. If data is missing, do not hallucinate—state that the data is unavailable for modeling."
-#     )
-
-#     history = memory.formatted_history()
-    
-#     messages = [
-#         {"role": "system", "content": system_msg}
-#     ]
-#     if history:
-#         messages.append({"role": "user", "content": f"Conversation history:\n{history}"})
-#         messages.append({"role": "user", "content": f"New Query: {user_input}"})
-#     else:
-#         messages.append({"role": "user", "content": user_input})
-
-#     gathered_context = []
-
-#     # Agent ReAct Loop
-#     max_iterations = 8
-#     iteration = 0
-    
-#     while iteration < max_iterations:
-#         iteration += 1
-#         print(f"[Agent Loop] Iteration {iteration}...")
-        
-#         response = agnes.client.chat.completions.create(
-#             model=agnes.model_name,
-#             messages=messages,
-#             tools=tools,
-#             tool_choice="auto",
-#             temperature=0.0
-#         )
-        
-#         message = response.choices[0].message
-#         messages.append(message)
-        
-#         if not message.tool_calls:
-#             print("[Agent Loop] No more tool calls requested. Finalizing response.")
-#             break
-            
-#         for tool_call in message.tool_calls:
-#             tool_name = tool_call.function.name
-#             tool_args = json.loads(tool_call.function.arguments)
-#             tool_id = tool_call.id
-            
-#             print(f"[Agent Call Tool] {tool_name} with args: {tool_args}")
-            
-#             result = ""
-#             if tool_name == "retrieve_corrective_rag":
-#                 query = tool_args.get("query")
-#                 graph = RetrievalGraph(store=store, embedder=embedder)
-#                 source, matches, retrieved_text = graph.retrieve(query)
-#                 result = f"Retrieved from local RAG (source: {source}):\n{retrieved_text}"
-#                 gathered_context.append(result)
-                
-#             elif tool_name == "get_financial_statements":
-#                 ticker = tool_args.get("ticker_symbol")
-#                 result = get_financial_statements(ticker)
-#                 gathered_context.append(f"Yahoo Finance financials for {ticker}:\n{result}")
-                
-#             elif tool_name == "get_ticker_news":
-#                 ticker = tool_args.get("ticker_symbol")
-#                 result = get_ticker_news(ticker)
-#                 gathered_context.append(f"Yahoo Finance news for {ticker}:\n{result}")
-                
-#             elif tool_name == "execute_python_code":
-#                 code = tool_args.get("code")
-#                 result = execute_python_code(code)
-#                 print(f"[Python Exec Output]\n{result}")
-                
-#             elif tool_name == "search_web":
-#                 query = tool_args.get("query")
-#                 graph = RetrievalGraph(store=store, embedder=embedder)
-#                 docs = graph.selector.search_web(query)
-#                 if docs:
-#                     result = "\n\n".join([f"SOURCE: {d.metadata.get('source')}\n{d.page_content}" for d in docs])
-#                 else:
-#                     result = "No web search results."
-#                 gathered_context.append(f"Web search for '{query}':\n{result}")
-            
-#             elif tool_name == "export_financials_to_pdf":
-#                 # Get all arguments from the tool call
-#                 ticker = tool_args.get("ticker")
-#                 title = tool_args.get("title")
-#                 explanation = tool_args.get("explanation")
-#                 tables_data = tool_args.get("tables_data")
-#                 output_filename = tool_args.get("output_filename") # This is optional
-
-#                 # Call the actual PDF export function
-#                 result = export_financial_findings_to_pdf(
-#                     ticker=ticker,
-#                     title=title,
-#                     explanation=explanation,
-#                     tables_data=tables_data,
-#                     output_filename=output_filename
-#                 )
-
-#             elif tool_name == "export_news_report_to_pdf":
-#                 result = export_news_report_to_pdf(
-#                     subject=tool_args.get("subject"),
-#                     title=tool_args.get("title"),
-#                     analysis_summary=tool_args.get("analysis_summary"),
-#                     news_items=tool_args.get("news_items")
-#                 )
-
-#             else:
-#                 result = f"Unknown tool: {tool_name}"
-                
-#             messages.append({
-#                 "role": "tool",
-#                 "tool_call_id": tool_id,
-#                 "name": tool_name,
-#                 "content": result
-#             })
-
-#     candidate_answer = messages[-1].content if messages[-1].role == "assistant" else ""
-#     if not candidate_answer:
-#         candidate_answer = str(messages[-1])
-
-#     # --- BINARY GATEKEEPER ---
-#     gatekeeper_system_msg = (
-#         "You are a quality control auditor. Your ONLY task is to determine if the AI Answer "
-#         "correctly and safely addresses the User Query based on the provided context. "
-#         "If the answer is relevant, accurate, and helpful, output 'YES'. "
-#         "If the answer is irrelevant, avoids the question, or is based on insufficient info, output 'NO'. "
-#         "Output ONLY the word 'YES' or 'NO'."
-#     )
-    
-#     context_summary = "\n\n".join(gathered_context) if gathered_context else "No external context retrieved."
-#     gatekeeper_user_msg = (
-#         f"User Query: {user_input}\n"
-#         f"Retrieved Context:\n{context_summary}\n\n"
-#         f"AI Answer: {candidate_answer}\n\n"
-#         "Decision (YES/NO):"
-#     )
-
-#     gatekeeper_response = agnes.client.chat.completions.create(
-#         model=agnes.model_name,
-#         messages=[{"role": "system", "content": gatekeeper_system_msg}, {"role": "user", "content": gatekeeper_user_msg}],
-#         temperature=0.0,
-#     )
-    
-#     decision = gatekeeper_response.choices[0].message.content.strip().upper()
-#     print(f"[Gatekeeper Decision: {decision}]")
-
-#     # Final Output Logic
-#     if "YES" in decision:
-#         return candidate_answer
-#     else:
-#         return f"[Audit Note: Candidate answer did not pass validation check. Gatekeeper Decision: {decision}]\n\nHere is the generated analysis for your reference:\n\n{candidate_answer}"
-
-# def chat_loop():
-#     """Interactive continuous chat session."""
-#     store = ChromaVectorStore(persist_dir=".chromadb", collection_name="financial_rag")
-#     embedder = LocalEmbedder()
-#     agnes = AgnesClient() if os.getenv("AGNES_API_KEY") else None
-#     memory = ChatMemory()
-
-#     print("Start chatting. Press Ctrl+C to stop and reset memory.\n")
-#     while True:
-#         try:
-#             user_input = input("You: ").strip()
-#         except KeyboardInterrupt:
-#             print("\n[Interrupt] Conversation reset and exiting.")
-#             memory.clear()
-#             break
-#         if not user_input:
-#             continue
-
-#         # Process the turn through the traceable function
-#         answer = process_chat_turn(user_input, store, embedder, agnes, memory)
-        
-#         print("\nAssistant:", answer, "\n")
-        
-#         # Store in memory
-#         memory.add_message("user", user_input)
-#         memory.add_message("assistant", answer)
-
-# if __name__ == "__main__":
-#     chat_loop()
-
-
-
-
 import os
 import sys
 import json
 import re
+import base64
 from dotenv import load_dotenv
 
-# 1. Load env before imports to ensure all library initializations see the env vars
+# 1. Load env before imports
 load_dotenv()
 
-from langsmith import traceable # Added for tracing
-
-from src.ingestion import PDFParser
-from src.chunking import RecursiveTextSplitter
+from langsmith import traceable
 from src.embeddings.embedder import LocalEmbedder
 from src.vectordb.chroma_client import ChromaVectorStore
 from src.agent.client import AgnesClient
 from src.tools.retrieval_rag_web_tools import RetrievalGraph
 from src.tools.chat_memory_tools import ChatMemory
-
-# Import LTM Strategy
 from src.persistence.ltm_strategy import LongTermMemoryManager
 
-# Import new tools
+# Import tools
 from src.tools.financial_tools import get_financial_statements, get_ticker_news
 from src.tools.python_interpreter_tools import execute_python_code
 from src.tools.pdf_exporter.financial_pdf_exporter_tools import export_financial_findings_to_pdf
 from src.tools.pdf_exporter.news_pdf_exporter_tools import export_news_report_to_pdf
 
+def encode_image(image_path):
+    """Encodes a local image file to base64 for the Vision model."""
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+def ensure_output_dirs():
+    """Ensures the nested output directory structure exists to prevent UI crashes."""
+    base_dir = "output_pdf"
+    sub_dirs = ["financials", "news"]
+    for sub in sub_dirs:
+        path = os.path.join(base_dir, sub)
+        if not os.path.exists(path):
+            os.makedirs(path)
+            print(f"[System] Created directory: {path}")
+    return base_dir
+
 @traceable(name="Process Chat Turn", run_type="chain")
-def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
-    """
-    Wraps a single interaction in a trace. 
-    Allows LangSmith to group everything into one tree.
-    """
+def process_chat_turn(user_input, store, embedder, agnes, memory, ltm, image_path=None):
     if not agnes:
         return "[AGNES_API_KEY not set] Unable to generate final answer."
 
-    # --- LTM INTEGRATION: Fetch Past Context ---
     past_facts = ltm.get_past_context(user_input)
 
-    # Define tools for the Agnes AI Model
     tools = [
         {
             "type": "function",
             "function": {
                 "name": "retrieve_corrective_rag",
-                "description": "Search and retrieve context from local financial documents (e.g. PDFs, statements).",
+                "description": "Search local documents related to APPLE INC financials statement in 2026 Q1.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Semantic query for RAG database retrieval."}
-                    },
+                    "properties": {"query": {"type": "string"}},
                     "required": ["query"]
                 }
             }
@@ -406,12 +62,10 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
             "type": "function",
             "function": {
                 "name": "get_financial_statements",
-                "description": "Get historical financials (Income Statement, Balance Sheet, Cash Flow) for a ticker from Yahoo Finance.",
+                "description": "Get historical financials from Yahoo Finance.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "ticker_symbol": {"type": "string", "description": "The stock ticker symbol (e.g., AAPL, TSLA)."}
-                    },
+                    "properties": {"ticker_symbol": {"type": "string"}},
                     "required": ["ticker_symbol"]
                 }
             }
@@ -420,12 +74,10 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
             "type": "function",
             "function": {
                 "name": "get_ticker_news",
-                "description": "Get recent news and articles for a stock ticker to analyze qualitative news sentiment.",
+                "description": "Get qualitative news sentiment.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "ticker_symbol": {"type": "string", "description": "The stock ticker symbol."}
-                    },
+                    "properties": {"ticker_symbol": {"type": "string"}},
                     "required": ["ticker_symbol"]
                 }
             }
@@ -434,12 +86,10 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
             "type": "function",
             "function": {
                 "name": "execute_python_code",
-                "description": "Run Python code to calculate financial ratios (Margins, ROE, CAGR, Debt/EBITDA) and build forecasts. Print outputs.",
+                "description": "Run Python math/forecasts.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "code": {"type": "string", "description": "The python code to execute. Standard output is captured and returned."}
-                    },
+                    "properties": {"code": {"type": "string"}},
                     "required": ["code"]
                 }
             }
@@ -448,12 +98,10 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
             "type": "function",
             "function": {
                 "name": "search_web",
-                "description": "Perform a live web search to find current news, management guidance, and industry trends that are not in the local database.",
+                "description": "Search live web for trends/guidance.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "The search query to look up on the web."}
-                    },
+                    "properties": {"query": {"type": "string"}},
                     "required": ["query"]
                 }
             }
@@ -462,18 +110,14 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
             "type": "function",
             "function": {
                 "name": "export_financials_to_pdf",
-                "description": "Generate a professionally styled PDF report with final explanations and tables. Use this when findings (such as forecasts or ratios) are generated and the user wants to export a PDF report that involves financial tables.",
+                "description": "Export professional financial table reports.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "ticker": {"type": "string", "description": "The stock ticker symbol (e.g. AAPL)."},
-                        "title": {"type": "string", "description": "Professional report title (e.g. AAPL Revenue Forecast & Valuation Analysis)."},
-                        "explanation": {"type": "string", "description": "Executive summary and analysis paragraphs explaining the findings in details."},
-                        "tables_data": {
-                            "type": "object",
-                            "description": "A dictionary where keys are table names (strings) and values are lists of lists representing rows and cells. Example: {'CAGR & Revenue Forecast': [['Metric', '2024', '2025'], ['Revenue ($B)', '394.33', '412.50'], ['Growth Rate', 'N/A', '4.6%']]}"
-                        },
-                        "output_filename": {"type": "string", "description": "Optional custom filename. Defaults to '<ticker>_financial_analysis_report.pdf'."}
+                        "ticker": {"type": "string"},
+                        "title": {"type": "string"},
+                        "explanation": {"type": "string"},
+                        "tables_data": {"type": "object"}
                     },
                     "required": ["ticker", "title", "explanation", "tables_data"]
                 }
@@ -483,25 +127,14 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
             "type": "function",
             "function": {
                 "name": "export_news_report_to_pdf",
-                "description": "Generate a PDF report for news articles, qualitative sentiment, or profiles of people. Use this when the user wants to export non-financial news summaries.",
+                "description": "Export non-financial news summaries or profiles.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "subject": {"type": "string", "description": "The person or company name."},
-                        "title": {"type": "string", "description": "Title of the news brief."},
-                        "analysis_summary": {"type": "string", "description": "A narrative summary of the news findings."},
-                        "news_items": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "title": {"type": "string"},
-                                    "source": {"type": "string"},
-                                    "date": {"type": "string"},
-                                    "summary": {"type": "string"}
-                                }
-                            }
-                        }
+                        "subject": {"type": "string"},
+                        "title": {"type": "string"},
+                        "analysis_summary": {"type": "string"},
+                        "news_items": {"type": "array", "items": {"type": "object"}}
                     },
                     "required": ["subject", "title", "analysis_summary", "news_items"]
                 }
@@ -509,34 +142,93 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
         }
     ]
 
-    # --- LTM INTEGRATION: Inject Past Facts into System Prompt ---
-    system_msg = (
-        "You are a Senior Financial Equity Analyst. Your goal is to perform a forward-looking financial analysis and valuation.\n\n"
-        "--- LONG-TERM MEMORY (PAST CONTEXT) ---\n"
-        f"{past_facts if past_facts else 'No previous context found.'}\n\n"
-        "Your Workflow:\n"
-        "1. Data Gathering: Attempt to retrieve historical financials (Income Statement, Balance Sheet, Cash Flow) for the requested ticker. "
-        "Prioritize local RAG documents using `retrieve_local_rag`; if unavailable or incomplete, use the Financial Data API via `get_financial_statements`.\n"
-        "2. Contextual Search: Search specifically for 'Management Guidance,' 'Earnings Call Transcripts,' and 'Industry Tailwinds' using the specialized search tool `search_web`.\n"
-        "3. Quantitative Modeling: Use the Python Interpreter tool `execute_python_code` to calculate key financial ratios (Margins, ROE, Debt/EBITDA) and build a 3-year revenue forecast based on historical CAGR and guidance.\n"
-        "4. Synthesis: Combine the quantitative model with qualitative news sentiment (via `get_ticker_news`) to predict the company's future performance.\n"
-        "5. Audit: Every number must be cited. If the source is a local doc, provide the filename; if it is the API/Web, provide the source. If data is missing, do not hallucinate—state that the data is unavailable for modeling."
-    )
+    # Vision Integration: Multimodal Content
+    user_content = [{"type": "text", "text": user_input}]
+    if image_path:
+        base64_image = encode_image(image_path)
+        user_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+        })
+
+    system_msg = f"""
+        You are YuAgent, a Senior Financial Equity Analyst with vision capabilities, PDF export capabilities, and access to previous long-term memory.
+
+        IDENTITY
+
+        * Your name is YuAgent.
+        * Your role is Senior Financial Equity Analyst.
+        * When users ask:
+
+        * "Who are you?"
+        * "What is your name?"
+        * "Introduce yourself"
+        * "What can you do?"
+
+        Respond as YuAgent.
+
+        Example:
+        User: Who are you?
+        Assistant: I am YuAgent, a Senior Financial Equity Analyst specializing in equity research, financial statement analysis, valuation, investment analysis, and market research.
+
+        * Do not introduce yourself as ChatGPT, GPT, OpenAI Assistant, or any other assistant name.
+        * If asked about your underlying technology, explain that you are powered by a large language model while maintaining your identity as YuAgent.
+
+        --- LONG-TERM MEMORY (PAST CONTEXT) ---
+        {past_facts if past_facts else "No previous context found."}
+
+        CORE RESPONSIBILITIES
+
+        * Perform equity research and investment analysis.
+        * Analyze annual reports, earnings reports, investor presentations, and financial statements.
+        * Explain valuation methodologies including DCF, comparable company analysis, precedent transactions, and ratio analysis.
+        * Generate professional investment memos and research reports.
+        * Analyze uploaded images, charts, graphs, and tables.
+        * Export structured reports suitable for PDF generation.
+
+        WORKFLOW
+
+        1. Prioritize local knowledge retrieval using `retrieve_corrective_rag`.
+        2. Use long-term memory when relevant.
+        3. If an image is provided, analyze charts, tables, and visual information.
+        4. Use `execute_python_code` for calculations, statistics, financial modeling, and quantitative analysis.
+        5. Use web search only when local knowledge is insufficient or when current information is required.
+        6. Always provide citations for:
+
+        * RAG retrieval results
+        * Web search results
+        * External data sources
+        7. Clearly distinguish:
+
+        * Facts
+        * Assumptions
+        * Estimates
+        * Opinions
+
+        RESPONSE QUALITY
+
+        * Be accurate, concise, and professional.
+        * Show calculations when performing financial analysis.
+        * State uncertainties when information is incomplete.
+        * Never fabricate financial data, citations, sources, or company information.
+        * If evidence is insufficient, explicitly say so.
+
+        OUTPUT FORMAT
+
+        * Use structured headings.
+        * Present tables when useful.
+        * Include citations where appropriate.
+        * Produce report-quality responses suitable for PDF export.
+    """
+
 
     history = memory.formatted_history()
-    
-    messages = [
-        {"role": "system", "content": system_msg}
-    ]
+    messages = [{"role": "system", "content": system_msg}]
     if history:
-        messages.append({"role": "user", "content": f"SHORT TERM MEMORY Conversation history:\n{history}"})
-        messages.append({"role": "user", "content": f"New Query: {user_input}"})
-    else:
-        messages.append({"role": "user", "content": user_input})
+        messages.append({"role": "user", "content": f"HISTORY: {history}"})
+    messages.append({"role": "user", "content": user_content})
 
     gathered_context = []
-
-    # Agent ReAct Loop
     max_iterations = 8
     iteration = 0
     
@@ -545,18 +237,12 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
         print(f"[Agent Loop] Iteration {iteration}...")
         
         response = agnes.client.chat.completions.create(
-            model=agnes.model_name,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=0.0
+            model=agnes.model_name, messages=messages, tools=tools, tool_choice="auto", temperature=0.0
         )
-        
         message = response.choices[0].message
         messages.append(message)
         
         if not message.tool_calls:
-            print("[Agent Loop] No more tool calls requested. Finalizing response.")
             break
             
         for tool_call in message.tool_calls:
@@ -564,143 +250,119 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm):
             tool_args = json.loads(tool_call.function.arguments)
             tool_id = tool_call.id
             
-            print(f"[Agent Call Tool] {tool_name} with args: {tool_args}")
+            print(f"[Agent Call Tool] {tool_name}")
             
             result = ""
             if tool_name == "retrieve_corrective_rag":
-                query = tool_args.get("query")
-                graph = RetrievalGraph(store=store, embedder=embedder)
-                source, matches, retrieved_text = graph.retrieve(query)
-                result = f"Retrieved from local RAG (source: {source}):\n{retrieved_text}"
+                source, matches, retrieved_text = RetrievalGraph(store, embedder).retrieve(tool_args.get("query"))
+                result = f"Local RAG: {retrieved_text}"
                 gathered_context.append(result)
-                
             elif tool_name == "get_financial_statements":
-                ticker = tool_args.get("ticker_symbol")
-                result = get_financial_statements(ticker)
-                gathered_context.append(f"Yahoo Finance financials for {ticker}:\n{result}")
-                
+                result = get_financial_statements(tool_args.get("ticker_symbol"))
+                gathered_context.append(f"Financials: {result}")
             elif tool_name == "get_ticker_news":
-                ticker = tool_args.get("ticker_symbol")
-                result = get_ticker_news(ticker)
-                gathered_context.append(f"Yahoo Finance news for {ticker}:\n{result}")
-                
+                result = get_ticker_news(tool_args.get("ticker_symbol"))
+                gathered_context.append(f"News: {result}")
             elif tool_name == "execute_python_code":
-                code = tool_args.get("code")
-                result = execute_python_code(code)
-                print(f"[Python Exec Output]\n{result}")
-                
+                result = execute_python_code(tool_args.get("code"))
             elif tool_name == "search_web":
-                query = tool_args.get("query")
-                graph = RetrievalGraph(store=store, embedder=embedder)
-                docs = graph.selector.search_web(query)
-                if docs:
-                    result = "\n\n".join([f"SOURCE: {d.metadata.get('source')}\n{d.page_content}" for d in docs])
-                else:
-                    result = "No web search results."
-                gathered_context.append(f"Web search for '{query}':\n{result}")
-            
+                docs = RetrievalGraph(store, embedder).selector.search_web(tool_args.get("query"))
+                result = "\n".join([d.page_content for d in docs])
+                gathered_context.append(f"Web: {result}")
             elif tool_name == "export_financials_to_pdf":
-                ticker = tool_args.get("ticker")
-                title = tool_args.get("title")
-                explanation = tool_args.get("explanation")
-                tables_data = tool_args.get("tables_data")
-                output_filename = tool_args.get("output_filename")
-
-                result = export_financial_findings_to_pdf(
-                    ticker=ticker,
-                    title=title,
-                    explanation=explanation,
-                    tables_data=tables_data,
-                    output_filename=output_filename
-                )
-
+                # Ensure the tool saves to 'output_pdf/financials/'
+                result = export_financial_findings_to_pdf(**tool_args)
             elif tool_name == "export_news_report_to_pdf":
-                result = export_news_report_to_pdf(
-                    subject=tool_args.get("subject"),
-                    title=tool_args.get("title"),
-                    analysis_summary=tool_args.get("analysis_summary"),
-                    news_items=tool_args.get("news_items")
-                )
+                # Ensure the tool saves to 'output_pdf/news/'
+                result = export_news_report_to_pdf(**tool_args)
+            
+            messages.append({"role": "tool", "tool_call_id": tool_id, "name": tool_name, "content": result})
 
-            else:
-                result = f"Unknown tool: {tool_name}"
-                
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_id,
-                "name": tool_name,
-                "content": result
-            })
+    candidate_answer = messages[-1].content if messages[-1].role == "assistant" else str(messages[-1])
 
-    candidate_answer = messages[-1].content if messages[-1].role == "assistant" else ""
-    if not candidate_answer:
-        candidate_answer = str(messages[-1])
-
-    # --- BINARY GATEKEEPER ---
-    gatekeeper_system_msg = (
-        "You are a quality control auditor. Your ONLY task is to determine if the AI Answer "
-        "correctly and safely addresses the User Query based on the provided context. "
-        "If the answer is relevant, accurate, and helpful, output 'YES'. "
-        "If the answer is irrelevant, avoids the question, or is based on insufficient info, output 'NO'. "
-        "Output ONLY the word 'YES' or 'NO'."
-    )
-    
-    context_summary = "\n\n".join(gathered_context) if gathered_context else "No external context retrieved."
-    gatekeeper_user_msg = (
-        f"User Query: {user_input}\n"
-        f"Retrieved Context:\n{context_summary}\n\n"
-        f"AI Answer: {candidate_answer}\n\n"
-        "Decision (YES/NO):"
-    )
-
+    # Gatekeeper
+    gatekeeper_system_msg = "You are a quality control auditor. Output 'YES' or 'NO - [reason]'."
     gatekeeper_response = agnes.client.chat.completions.create(
         model=agnes.model_name,
-        messages=[{"role": "system", "content": gatekeeper_system_msg}, {"role": "user", "content": gatekeeper_user_msg}],
+        messages=[{"role": "system", "content": gatekeeper_system_msg}, 
+                  {"role": "user", "content": f"Query: {user_input}\nAnswer: {candidate_answer}"}],
         temperature=0.0,
     )
-    
-    decision = gatekeeper_response.choices[0].message.content.strip().upper()
-    print(f"[Gatekeeper Decision: {decision}]")
+    gatekeeper_output = gatekeeper_response.choices[0].message.content.strip()
+    print(f"[Gatekeeper Decision: {gatekeeper_output}]")
 
-    # Final Output Logic
-    if "YES" in decision:
-        # --- LTM INTEGRATION: Save turn facts to long term memory ---
+    if gatekeeper_output.upper().startswith("YES"):
         ltm.save_chat_turn(user_input, candidate_answer, True)
         return candidate_answer
     else:
         ltm.save_chat_turn(user_input, candidate_answer, False)
-        return f"[Audit Note: Candidate answer did not pass validation check. Gatekeeper Decision: {decision}]\n\nHere is the generated analysis for your reference:\n\n{candidate_answer}"
+        return f"[Audit Note: {gatekeeper_output}]\n\n{candidate_answer}"
 
+def start_gradio_ui():
+    """Launches the Gradio Web interface with directory safety."""
+    import gradio as gr
     
-def chat_loop():
-    """Interactive continuous chat session."""
+    # 1. Tidy up and Ensure directories exist
+    root_pdf_dir = ensure_output_dirs()
+    
     store = ChromaVectorStore(persist_dir=os.getenv("CHROMA_DIR"), collection_name="financial_rag")
     embedder = LocalEmbedder()
-    agnes = AgnesClient() if os.getenv("AGNES_API_KEY") else None
+    agnes = AgnesClient()
     memory = ChatMemory()
-    
-    # --- LTM INTEGRATION: Initialize Long Term Memory ---
     ltm = LongTermMemoryManager()
 
-    print("Start chatting. Press Ctrl+C to stop and reset memory.\n")
+    def predict(message, history):
+        user_text = message["text"]
+        image_path = None
+        for f in message["files"]:
+            if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                image_path = f
+                break
+        
+        response = process_chat_turn(user_text, store, embedder, agnes, memory, ltm, image_path=image_path)
+        
+        memory.add_message("user", user_text)
+        memory.add_message("assistant", response)
+        return response
+
+    with gr.Blocks(theme=gr.themes.Soft(), title="Analyst Agent") as demo:
+        gr.Markdown("# 📈 Financial Analyst AI Dashboard")
+        
+        with gr.Row():
+            with gr.Column(scale=4):
+                gr.ChatInterface(fn=predict, multimodal=True)
+            with gr.Column(scale=1):
+                gr.Markdown("### 📂 Exported Files")
+                # Points to the main folder containing /financials and /news
+                file_exp = gr.FileExplorer(root_dir=root_pdf_dir, label="All PDF Reports")
+                refresh_btn = gr.Button("🔄 Refresh Explorer")
+                refresh_btn.click(lambda: None, None, file_exp)
+
+    demo.launch(server_name="127.0.0.1", server_port=7860, share=False)
+
+def chat_loop():
+    """CLI chat loop."""
+    ensure_output_dirs()
+    store = ChromaVectorStore(persist_dir=os.getenv("CHROMA_DIR"), collection_name="financial_rag")
+    embedder = LocalEmbedder()
+    agnes = AgnesClient()
+    memory = ChatMemory()
+    ltm = LongTermMemoryManager()
+
+    print("CLI Mode. Run with --ui for Web Dashboard.\n")
     while True:
         try:
             user_input = input("You: ").strip()
+            if not user_input: continue
+            answer = process_chat_turn(user_input, store, embedder, agnes, memory, ltm)
+            print(f"\nAssistant: {answer}\n")
+            memory.add_message("user", user_input)
+            memory.add_message("assistant", answer)
         except KeyboardInterrupt:
-            print("\n[Interrupt] Conversation reset and exiting.")
-            memory.clear()
             break
-        if not user_input:
-            continue
-
-        # Process the turn through the traceable function - Passing 'ltm'
-        answer = process_chat_turn(user_input, store, embedder, agnes, memory, ltm)
-        
-        print("\nAssistant:", answer, "\n")
-        
-        # Store in session memory
-        memory.add_message("user", user_input)
-        memory.add_message("assistant", answer)
 
 if __name__ == "__main__":
-    chat_loop()
+    if len(sys.argv) > 1 and sys.argv[1] == "--ui":
+        start_gradio_ui()
+    else:
+        chat_loop()
