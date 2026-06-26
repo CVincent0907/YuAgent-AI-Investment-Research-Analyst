@@ -17,3 +17,6 @@ data/
 
 # Virtual environment 
 ragvenv/
+
+# MCP Google Sheet Client JSON
+ultimate-ascent-367413-dc9c6594b9ba.json/
