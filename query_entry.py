@@ -31,12 +31,17 @@ from src.tools.mcp import (
     update_portfolio_data,   # legacy shim — kept as safety fallback only
 )
 
+from src.tools.telegram import (
+    send_telegram_message,
+    start_daily_scheduler,
+)
+
 # Import tools
 from src.tools.financial_tools import get_financial_statements, get_ticker_news
 from src.tools.python_interpreter_tools import execute_python_code
 from src.tools.pdf_exporter.financial_pdf_exporter_tools import export_financial_findings_to_pdf
 from src.tools.pdf_exporter.news_pdf_exporter_tools import export_news_report_to_pdf
-
+from src.tools.telegram.daily_report_tools import run_daily_portfolio_report
 
 def encode_image(image_path):
     """Encodes a local image file to base64 for the Vision model."""
@@ -170,12 +175,17 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm, image_pat
             elif tool_name == "export_news_report_to_pdf":
                 result = export_news_report_to_pdf(**tool_args)
 
+            elif tool_name == "send_telegram_message":
+                result = send_telegram_message(tool_args.get("message"))
+
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_id,
                 "name": tool_name,
                 "content": str(result),
             })
+
+            
 
     last_msg = messages[-1]
     if isinstance(last_msg, dict):
@@ -204,6 +214,38 @@ def process_chat_turn(user_input, store, embedder, agnes, memory, ltm, image_pat
         ltm.save_chat_turn(user_input, candidate_answer, False)
         return f"[Audit Note: {gatekeeper_output}]\n\n{candidate_answer}"
 
+# @traceable(
+#     name="Scheduled Daily Portfolio Analysis",
+#     run_type="chain"
+# )
+# def scheduled_daily_analysis(store,embedder,agnes,memory,ltm,):
+#     """
+#     Runs automatically every morning.
+#     """
+
+#     prompt = (
+#         "Review my investment portfolio. "
+#         "Retrieve my latest holdings from Google Sheets. "
+#         "Search today's market news. "
+#         "Analyze each holding. "
+#         "Identify important catalysts. "
+#         "Predict today's market outlook. "
+#         "Recommend Buy/Hold/Sell actions if necessary. "
+#         "Summarize everything into a concise morning briefing."
+#     )
+
+#     report = process_chat_turn(
+#         user_input=prompt,
+#         store=store,
+#         embedder=embedder,
+#         agnes=agnes,
+#         memory=memory,
+#         ltm=ltm,
+#     )
+
+#     send_telegram_message(report)
+
+#     return report
 
 def start_gradio_ui():
     """Launches the Gradio Web interface with directory safety."""
@@ -216,6 +258,12 @@ def start_gradio_ui():
     agnes = AgnesClient()
     memory = ChatMemory()
     ltm = LongTermMemoryManager()
+
+    start_daily_scheduler(
+        callback=lambda: run_daily_portfolio_report(process_chat_turn,store,embedder,agnes,memory,ltm),
+        hour=8,
+        minute=0,
+    )
 
     def predict(message, history):
         user_text = message["text"]
@@ -254,8 +302,14 @@ def chat_loop():
     agnes = AgnesClient()
     memory = ChatMemory()
     ltm = LongTermMemoryManager()
-
     print("CLI Mode. Run with --ui for Web Dashboard.\n")
+    
+    start_daily_scheduler(
+        callback=lambda: run_daily_portfolio_report(process_chat_turn,store,embedder,agnes,memory,ltm),
+        hour=8,
+        minute=0,
+    )
+
     while True:
         try:
             user_input = input("You: ").strip()
