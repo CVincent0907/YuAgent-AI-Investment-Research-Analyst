@@ -1,13 +1,21 @@
 # Financial Analyst Agent Architecture
 
 ## High-Level Architecture
+```
 
-```text
                           ┌──────────────────────────┐
-                          │        User Query        │
+                          │ User / Scheduler Trigger │
                           └────────────┬─────────────┘
                                        │
-                                       ▼
+                     ┌─────────────────┴─────────────────┐
+                     │                                   │
+                     ▼                                   ▼
+             Interactive Query                 8:00 AM Scheduler
+                                                     │
+                                                     ▼
+                                      Daily Portfolio Prompt
+                                                     │
+                                                     ▼
                     ┌──────────────────────────────────┐
                     │ Long-Term Memory Retrieval (LTM) │
                     │ Retrieve relevant past context   │
@@ -19,6 +27,7 @@
                     │ - Agent Role                     │
                     │ - Conversation History           │
                     │ - Long-Term Memory               │
+                    │ - Current System Time            │
                     └────────────┬─────────────────────┘
                                  │
                                  ▼
@@ -59,47 +68,11 @@
                       ▼          ▼
              Save to Long-Term Memory
                       │
-                      ▼
-               Return Final Answer
-```
-
----
-
-# Internal Corrective RAG Architecture
-
-The `retrieve_corrective_rag` tool itself contains another agentic workflow built with LangGraph.
-
-```text
-                 Query
-                   │
-                   ▼
-      Hybrid Retrieval (Dense + BM25)
-                   │
-                   ▼
-        FlashRank Cross Encoder
-               Reranking
-                   │
-                   ▼
-        Evaluate Context Quality
-         (LLM + Similarity Score)
-                   │
-         ┌─────────┴─────────┐
-         │                   │
-     Sufficient          Insufficient
-         │                   │
-         ▼                   ▼
-      Return           Web Search
-                             │
-                             ▼
-                  Merge Local + Web Results
-                             │
-                             ▼
-                      FlashRank Again
-                             │
-                             ▼
-                    Final Retrieved Context
-```
-
+          ┌───────────┴────────────┐
+          │                        │
+          ▼                        ▼
+ Return Final Answer       Send Telegram Report
+ ```
 ---
 
 # ReAct Tool Invocation Flow
@@ -111,39 +84,35 @@ Iteration 1
 ------------
 Think
 ↓
-Call retrieve_corrective_rag
-↓
-Observe retrieved context
+Retrieve portfolio from Google Sheets
 
 Iteration 2
 ------------
-Think
-↓
-Call get_financial_statements
-↓
-Observe financial data
+Search latest market news (Brave)
 
 Iteration 3
 ------------
-Think
-↓
-Call execute_python_code
-↓
-Observe calculated ratios
+Search supporting web information
 
 Iteration 4
 ------------
-Think
-↓
-Call search_brave_fresh_news
-↓
-Observe market news
+Retrieve financial statements
 
 Iteration 5
 ------------
-Think
-↓
-Generate final investment thesis
+Retrieve company news
+
+Iteration 6
+------------
+Execute Python calculations
+
+Iteration 7
+------------
+Generate investment thesis
+
+Iteration 8
+------------
+Export report or send Telegram message (if requested)
 
 Stop
 ```
@@ -198,10 +167,21 @@ The loop continues until:
 
 ## Reporting
 
-| Tool | Purpose |
-|-------|---------|
-| export_financials_to_pdf | Export financial report |
-| export_news_report_to_pdf | Export news report |
+| Tool                       | Purpose                                          |
+| -------------------------- | ------------------------------------------------ |
+| export_financials_to_pdf   | Export Financial Analysis PDF                    |
+| export_news_report_to_pdf  | Export News Summary PDF                          |
+| send_telegram_message      | Send analysis or alerts directly to Telegram     |
+| run_daily_portfolio_report | Execute the autonomous morning investment review |
+
+---
+
+## Scheduling 
+
+| Component       | Purpose                                                                         |
+| --------------- | ------------------------------------------------------------------------------- |
+| Daily Scheduler | Automatically executes the Morning Portfolio Analysis at 8:00 AM                |
+| Telegram Bot    | Delivers the completed investment briefing directly to the user's Telegram chat |
 
 ---
 
@@ -289,14 +269,16 @@ for up to **15 reasoning iterations**.
 
 ## 4. Tool-Oriented Reasoning
 
-The agent can autonomously combine:
+The agent autonomously combines:
 
-- Local RAG
+- Local Corrective RAG
 - Financial APIs
-- Market News
+- Brave Search
+- DuckDuckGo Search
+- Google Sheets MCP
 - Python computation
-- Google Sheets portfolio management
 - PDF generation
+- Telegram messaging
 
 within a single reasoning session.
 
@@ -313,6 +295,23 @@ allowing follow-up questions to build on previous interactions.
 
 ---
 
+## 6. Autonomous Scheduled Research
+
+The agent can operate autonomously without user interaction.
+
+Using the built-in scheduler, it can:
+
+- Wake up every morning at a configured time
+- Retrieve the latest portfolio from Google Sheets
+- Search overnight market developments
+- Analyze each portfolio holding
+- Evaluate portfolio risks and opportunities
+- Predict the day's likely market direction
+- Deliver a complete investment briefing via Telegram
+
+This transforms the system from an interactive chatbot into a continuously operating investment research assistant.
+
+---
 # Best Use Cases
 
 This architecture performs particularly well for:
@@ -329,6 +328,11 @@ This architecture performs particularly well for:
 - Long-running research conversations
 - Financial report generation
 - Decision support for investment professionals
+- Autonomous morning portfolio reviews
+- Scheduled investment monitoring
+- Telegram investment notifications
+- Continuous thesis monitoring
+- Portfolio health tracking
 
 Unlike a standard chatbot, the system behaves as a **financial research agent**, capable of planning, gathering evidence from multiple sources, performing calculations, and synthesizing the results into a coherent investment analysis.
 
@@ -561,4 +565,97 @@ Produce a comprehensive investment research report that includes:
 - Key Risks
 - Three-Year Outlook
 - Final Buy, Hold, or Sell Recommendation
+```
+## 21. Send Investment Summary to Telegram
+
+**Prompt**
+
+```text
+Summarize today's portfolio analysis and send the report to my Telegram.
+```
+
+---
+
+## 22. Morning Portfolio Briefing
+
+**Prompt**
+
+```text
+Perform a complete morning investment review.
+
+Retrieve my latest portfolio.
+
+Analyze overnight US market performance.
+
+Review today's Asian and global market outlook.
+
+Search for breaking news affecting my portfolio holdings.
+
+Assess portfolio risks and opportunities.
+
+Predict today's likely market direction.
+
+Provide Buy, Hold, Reduce, or Sell recommendations for each holding.
+
+Finally, send the complete report to my Telegram.
+```
+
+---
+
+## 23. Market Alert
+
+**Prompt**
+
+```text
+Monitor Nvidia throughout the day.
+
+If any major news, earnings announcement, analyst upgrade, downgrade, regulatory event, or other significant catalyst is detected that could materially affect the stock price, immediately send me a Telegram notification summarizing the event and its potential investment impact.
+```
+
+---
+
+## 24. Portfolio Monitoring
+
+**Prompt**
+
+```text
+Review my current investment portfolio.
+
+Evaluate every holding against its original investment thesis.
+
+Identify any weakening or broken thesis, major portfolio risks, concentration risks, or opportunities for capital reallocation.
+
+If any holding requires immediate attention, send me a Telegram alert with your recommendations.
+```
+
+---
+
+## 25. Scheduled Daily Investment Analyst
+
+**Prompt**
+
+```text
+Every morning at 8:00 AM, automatically perform a complete investment committee review of my portfolio.
+
+Retrieve my latest holdings.
+
+Research overnight macroeconomic events.
+
+Review US market performance.
+
+Analyze today's Asian and global market outlook.
+
+Search for the latest news affecting every portfolio holding.
+
+Review financial fundamentals if new information is available.
+
+Assess portfolio risks and opportunities.
+
+Predict today's expected market direction.
+
+Recommend Buy, Hold, Reduce, or Sell actions for every holding.
+
+Generate an executive summary, portfolio health score, top news, key risks, opportunities, and recommended actions.
+
+Finally, deliver the complete morning investment briefing to my Telegram.
 ```
