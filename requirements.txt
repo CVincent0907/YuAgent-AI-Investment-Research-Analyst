@@ -15,3 +15,6 @@ mem0ai
 mem0ai[nlp]
 gradio 
 mcp
+python-telegram-bot
+requests
+schedule
