@@ -265,5 +265,22 @@ TOOL_DESC_MSG = [
                     "required": ["subject", "title", "analysis_summary", "news_items"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "send_telegram_message",
+                "description": "Send a formatted message to the user's Telegram bot.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "Message to send."
+                        }
+                    },
+                    "required": ["message"]
+                }
+            }
         }
     ]
