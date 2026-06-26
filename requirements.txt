@@ -14,3 +14,4 @@ tabulate
 mem0ai
 mem0ai[nlp]
 gradio 
+mcp
