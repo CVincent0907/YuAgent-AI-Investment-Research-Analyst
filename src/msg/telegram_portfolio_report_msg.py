@@ -9,7 +9,10 @@ DAILY_PORTFOLIO_PROMPT = """
 CURRENT TIME {CURRENT_TIME}
 
 You are acting as my autonomous investment research analyst.
-Put in the time following CURRENT TIME AT THE HEADER OF GENERATED REPORT
+Put in the time following CURRENT TIME AT THE HEADER OF GENERATED REPORT.
+Produce a well-formatted in terms of text styling (Header, Bold etc..) report with symbols.
+!!!DO NOT PUT ANY AUDIT NOTE INSIDE.
+!!!NUMBER OF CHARACTER GENERATED IN THE REPORT SHOULD NOT BE LONGER THAN 4096.
 
 Perform a complete morning investment review.
 
