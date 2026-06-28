@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  yuagent:
+    build: .
+    ports:
+      - "7860:7860"
+
+    container_name: yuagent
+
+    restart: unless-stopped
+
+    environment:
+      TZ: Asia/Singapore
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./ultimate-ascent-367413-dc9c6594b9ba.json:/app/ultimate-ascent-367413-dc9c6594b9ba.json:ro
+      - ./.financial_chroma_db:/app/.financial_chroma_db
+      - ./.ltm_mem0_storage:/app/.ltm_mem0_storage
+      - ./output_pdf:/app/output_pdf
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+    stdin_open: true
+    tty: true
+
+    command: python query_entry.py --ui
