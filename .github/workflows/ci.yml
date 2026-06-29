@@ -30,3 +30,7 @@ jobs:
       - name: Build Docker Image
         run: |
           docker build -t yuagent .
+
+      - name: Start container
+        run: |
+          docker run --rm yuagent python --version
