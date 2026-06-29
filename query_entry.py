@@ -261,8 +261,8 @@ def start_gradio_ui():
 
     start_daily_scheduler(
         callback=lambda: run_daily_portfolio_report(process_chat_turn,store,embedder,agnes,memory,ltm),
-        hour=8,
-        minute=0,
+        hour=11,
+        minute=15,
     )
 
     def predict(message, history):
@@ -279,8 +279,8 @@ def start_gradio_ui():
         memory.add_message("assistant", response)
         return response
 
-    with gr.Blocks(theme=gr.themes.Soft(), title="Analyst Agent") as demo:
-        gr.Markdown("# 📈 Financial Analyst AI Dashboard")
+    with gr.Blocks(theme=gr.themes.Soft(), title="YuAgent") as demo:
+        gr.Markdown("# 📈 YuAgent The Financial Analyst")
 
         with gr.Row():
             with gr.Column(scale=4):
@@ -291,7 +291,7 @@ def start_gradio_ui():
                 refresh_btn = gr.Button("🔄 Refresh Explorer")
                 refresh_btn.click(lambda: None, None, file_exp)
 
-    demo.launch(server_name="127.0.0.1", server_port=7860, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
 
 
 def chat_loop():
@@ -303,11 +303,11 @@ def chat_loop():
     memory = ChatMemory()
     ltm = LongTermMemoryManager()
     print("CLI Mode. Run with --ui for Web Dashboard.\n")
-    
+
     start_daily_scheduler(
         callback=lambda: run_daily_portfolio_report(process_chat_turn,store,embedder,agnes,memory,ltm),
-        hour=8,
-        minute=0,
+        hour=11,
+        minute=15,
     )
 
     while True:
