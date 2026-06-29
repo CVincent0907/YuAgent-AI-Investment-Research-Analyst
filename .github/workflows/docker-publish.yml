@@ -1,4 +1,3 @@
-```yaml
 name: Publish Docker Image
 
 on:
@@ -12,11 +11,9 @@ permissions:
 
 jobs:
   docker-publish:
-
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -36,4 +33,3 @@ jobs:
       - name: Push Docker Image
         run: |
           docker push ghcr.io/${{ github.repository_owner }}/yuagent:latest
-```
